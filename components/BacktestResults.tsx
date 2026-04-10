@@ -33,6 +33,8 @@ type BacktestResultsData = {
 
 type BacktestResultsProps = {
   results: BacktestResultsData;
+  showOnChart?: boolean;
+  onToggleShowOnChart?: () => void;
 };
 
 function formatSignedPercent(value: number): string {
@@ -47,9 +49,29 @@ function formatMoney(value: number): string {
   })}`;
 }
 
-export function BacktestResults({ results }: BacktestResultsProps) {
+export function BacktestResults({
+  results,
+  showOnChart,
+  onToggleShowOnChart,
+}: BacktestResultsProps) {
   return (
     <section className="mt-4 space-y-4">
+      {typeof showOnChart === "boolean" && onToggleShowOnChart ? (
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            onClick={onToggleShowOnChart}
+            className={`rounded border px-2 py-1 font-mono text-[11px] ${
+              showOnChart
+                ? "border-[#1f6b45] bg-[#123523] text-green-300"
+                : "border-[#2a2a2a] bg-[#141414] text-zinc-300"
+            }`}
+          >
+            {showOnChart ? "Hide on Chart" : "Show on Chart"}
+          </button>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded border border-[#2a2a2a] bg-[#111] p-3 font-mono">
           <p className="text-[11px] text-zinc-500">Total Return</p>

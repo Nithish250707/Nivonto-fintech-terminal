@@ -49,9 +49,12 @@ type BacktestResult = {
 type StrategyBuilderProps = {
   ticker: string;
   onBacktestResults?: (results: BacktestResult) => void;
+  onBacktestRunStart?: () => void;
   loadedStrategy?: SavedStrategy | null;
   onStrategySaved?: () => void;
   onStrategyDeleted?: (strategyId: string) => void;
+  showTradesOnChart?: boolean;
+  onToggleShowTradesOnChart?: () => void;
 };
 
 type RuleType = "buy" | "sell";
@@ -66,9 +69,12 @@ const defaultRule: Rule = {
 export function StrategyBuilder({
   ticker,
   onBacktestResults,
+  onBacktestRunStart,
   loadedStrategy,
   onStrategySaved,
   onStrategyDeleted,
+  showTradesOnChart = true,
+  onToggleShowTradesOnChart,
 }: StrategyBuilderProps) {
   const [name, setName] = useState("My Strategy");
   const [buyRules, setBuyRules] = useState<Rule[]>([{ ...defaultRule }]);
@@ -138,6 +144,7 @@ export function StrategyBuilder({
   const runBacktest = async () => {
     setLoading(true);
     setBacktestError(null);
+    onBacktestRunStart?.();
 
     try {
       const response = await fetch("/api/backtest", {
@@ -303,7 +310,13 @@ export function StrategyBuilder({
         <p className="mt-4 animate-pulse font-mono text-sm text-zinc-500">⟳ Running backtest...</p>
       ) : null}
 
-      {results ? <BacktestResults results={results} /> : null}
+      {results ? (
+        <BacktestResults
+          results={results}
+          showOnChart={showTradesOnChart}
+          onToggleShowOnChart={onToggleShowTradesOnChart ?? (() => {})}
+        />
+      ) : null}
     </section>
   );
 }

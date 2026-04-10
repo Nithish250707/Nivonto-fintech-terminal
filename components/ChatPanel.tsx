@@ -5,11 +5,52 @@ import { useEffect, useRef, useState } from "react";
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
+  kind?: "text" | "strategy";
 };
 
 type ChatPanelProps = {
   ticker: string;
 };
+
+type StrategyEvent =
+  | { type: "status"; step: string }
+  | { type: "code_delta"; delta: string }
+  | { type: "code_reset"; code: string }
+  | { type: "result"; code: string }
+  | { type: "error"; message: string };
+
+const STRATEGY_KEYWORDS = [
+  "buy when",
+  "sell when",
+  "strategy",
+  "backtest",
+  "crosses",
+  "above",
+  "below",
+  "moving average",
+  "rsi",
+  "macd",
+  "breakout",
+  "support",
+  "resistance",
+];
+
+function isStrategyRequest(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return STRATEGY_KEYWORDS.some((keyword) => normalized.includes(keyword));
+}
+
+async function fetchCandles(ticker: string) {
+  const response = await fetch(`/api/candles?ticker=${encodeURIComponent(ticker)}`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load candles (${response.status})`);
+  }
+
+  return response.json();
+}
 
 export function ChatPanel({ ticker }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -26,7 +67,9 @@ export function ChatPanel({ ticker }: ChatPanelProps) {
       return;
     }
 
-    const userMsg: ChatMessage = { role: "user", content: input };
+    const prompt = input.trim();
+    const strategyMode = isStrategyRequest(prompt);
+    const userMsg: ChatMessage = { role: "user", content: prompt, kind: "text" };
     const newMessages = [...messages, userMsg];
 
     setMessages(newMessages);
@@ -34,11 +77,26 @@ export function ChatPanel({ ticker }: ChatPanelProps) {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/chat", {
+      const endpoint = strategyMode ? "/api/strategy-ai" : "/api/chat";
+      const payload = strategyMode
+        ? { prompt, ticker, candles: await fetchCandles(ticker) }
+        : {
+            messages: newMessages.map((message) => ({
+              role: message.role,
+              content: message.content,
+            })),
+            ticker,
+          };
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages, ticker }),
+        body: JSON.stringify(payload),
       });
+
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
+      }
 
       if (!res.body) {
         throw new Error("Missing response body");
@@ -47,7 +105,78 @@ export function ChatPanel({ ticker }: ChatPanelProps) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
 
-      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "", kind: strategyMode ? "strategy" : "text" },
+      ]);
+
+      const appendToLastAssistant = (chunk: string) => {
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+
+          if (last?.role === "assistant") {
+            next[next.length - 1] = {
+              ...last,
+              content: `${last.content}${chunk}`,
+            };
+          }
+
+          return next;
+        });
+      };
+
+      const replaceLastAssistant = (content: string) => {
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+
+          if (last?.role === "assistant") {
+            next[next.length - 1] = {
+              ...last,
+              content,
+            };
+          }
+
+          return next;
+        });
+      };
+
+      if (strategyMode) {
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          buffer += decoder.decode(value, { stream: !done });
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+              continue;
+            }
+
+            const event = JSON.parse(trimmed) as StrategyEvent;
+            if (event.type === "code_delta") {
+              appendToLastAssistant(event.delta);
+            } else if (event.type === "code_reset") {
+              replaceLastAssistant(event.code);
+            } else if (event.type === "result") {
+              replaceLastAssistant(event.code);
+            } else if (event.type === "error") {
+              appendToLastAssistant(`\n\nError: ${event.message}`);
+            }
+          }
+
+          if (done) {
+            break;
+          }
+        }
+
+        return;
+      }
 
       while (true) {
         const { done, value } = await reader.read();
@@ -60,40 +189,29 @@ export function ChatPanel({ ticker }: ChatPanelProps) {
           continue;
         }
 
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-
-          if (last?.role === "assistant") {
-            next[next.length - 1] = {
-              ...last,
-              content: `${last.content}${text}`,
-            };
-          }
-
-          return next;
-        });
+        appendToLastAssistant(text);
       }
 
       const trailing = decoder.decode();
       if (trailing) {
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-
-          if (last?.role === "assistant") {
-            next[next.length - 1] = {
-              ...last,
-              content: `${last.content}${trailing}`,
-            };
-          }
-
-          return next;
-        });
+        appendToLastAssistant(trailing);
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Request failed";
+      setMessages((prev) => [...prev, { role: "assistant", content: message, kind: "text" }]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleRunBacktest = (code: string) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem("strategy:generatedCode", code);
+    window.localStorage.setItem("strategy:generatedTicker", ticker);
+    window.location.href = `/strategies?ticker=${encodeURIComponent(ticker)}`;
   };
 
   const prompts = [
@@ -126,12 +244,26 @@ export function ChatPanel({ ticker }: ChatPanelProps) {
 
         <div className="space-y-2">
           {messages.map((message, index) => (
-            <p
-              key={`${message.role}-${index}`}
-              className={message.role === "user" ? "text-green-400" : "text-zinc-200"}
-            >
-              {message.content}
-            </p>
+            <div key={`${message.role}-${index}`}>
+              {message.role === "assistant" && message.kind === "strategy" ? (
+                <div className="space-y-2 rounded border border-[#1f1f1f] bg-[#101010] p-2">
+                  <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-zinc-200">
+                    {message.content}
+                  </pre>
+                  <button
+                    type="button"
+                    onClick={() => handleRunBacktest(message.content)}
+                    className="rounded border border-[#1f6b45] bg-[#123523] px-2 py-1 font-mono text-[11px] text-green-300 hover:bg-[#184b30]"
+                  >
+                    Run Backtest
+                  </button>
+                </div>
+              ) : (
+                <p className={message.role === "user" ? "text-green-400" : "text-zinc-200"}>
+                  {message.content}
+                </p>
+              )}
+            </div>
           ))}
           {loading ? <p className="animate-pulse text-zinc-500">~ thinking...</p> : null}
           <div ref={bottomRef} />

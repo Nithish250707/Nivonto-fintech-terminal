@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
-import { getLatestPrice, getTickerNews } from "@/lib/massive";
+import { getQuote } from "@/lib/finnhub";
+import { getTickerNews } from "@/lib/massive";
 import { buildSystemPrompt } from "@/lib/prompts";
 
 type ChatMessage = {
@@ -15,13 +16,12 @@ export async function POST(request: NextRequest) {
       ticker: string;
     };
 
-    const [latestPrice, news] = await Promise.all([
-      getLatestPrice(ticker),
+    const [quote, news] = await Promise.all([
+      getQuote(ticker),
       getTickerNews(ticker),
     ]);
 
-    const { open, high, low, close: price, change, changePct } = latestPrice;
-    const prevClose = 0;
+    const { open, high, low, current: price, change, changePercent, prevClose } = quote;
 
     const systemPrompt = buildSystemPrompt({
       ticker,
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
       low,
       prevClose,
       change,
-      changePct,
+      changePercent,
       news,
     });
 

@@ -11,6 +11,7 @@ export type BacktestStatsResults = {
   winRate: number;
   sharpeRatio: number;
   trades: BacktestTrade[];
+  periodDays?: number;
 };
 
 type BacktestStatsBarProps = {
@@ -27,7 +28,9 @@ export function BacktestStatsBar({ results }: BacktestStatsBarProps) {
     return null;
   }
 
-  const annualReturn = results.totalReturn / 1;
+  const days = results.periodDays && results.periodDays > 0 ? results.periodDays : 365;
+  const annualReturn =
+    days > 0 ? (Math.pow(1 + results.totalReturn / 100, 365 / days) - 1) * 100 : results.totalReturn;
 
   return (
     <div className="border-t border-[#1e1e1e] bg-[#0d0d0d] px-4 py-2">
@@ -45,6 +48,9 @@ export function BacktestStatsBar({ results }: BacktestStatsBarProps) {
         <span className={annualReturn >= 0 ? "text-green-400" : "text-red-400"}>
           {formatSignedPercent(annualReturn)}
         </span>
+
+        <span className="text-zinc-500">PERIOD:</span>
+        <span className="text-zinc-300">{`${Math.round(days)}d`}</span>
 
         <span className="text-zinc-500">MAX DRAWDOWN:</span>
         <span className="text-red-400">{formatSignedPercent(results.maxDrawdown)}</span>

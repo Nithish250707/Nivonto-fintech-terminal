@@ -12,6 +12,11 @@ export type Strategy = {
   sellRules: Rule[];
 };
 
+export type Signal = {
+  date: string;
+  type: "BUY" | "SELL";
+};
+
 export type Candle = {
   date: string;
   open: number;
@@ -21,7 +26,7 @@ export type Candle = {
   volume: number;
 };
 
-type Trade = {
+export type Trade = {
   buyDate: string;
   buyPrice: number;
   sellDate: string;
@@ -29,12 +34,12 @@ type Trade = {
   returnPct: number;
 };
 
-type EquityPoint = {
+export type EquityPoint = {
   date: string;
   value: number;
 };
 
-type BacktestResult = {
+export type BacktestResult = {
   trades: Trade[];
   equityCurve: EquityPoint[];
   totalReturn: number;
@@ -90,7 +95,97 @@ function calculateMaxDrawdown(equityCurve: EquityPoint[]): number {
   return maxDrawdown;
 }
 
-export function runBacktest(candles: Candle[], strategy: Strategy): BacktestResult {
+function finalizeBacktest(
+  trades: Trade[],
+  equityCurve: EquityPoint[],
+  initialEquity: number,
+  finalEquity: number,
+): BacktestResult {
+  const tradeReturns = trades.map((trade) => trade.returnPct / 100);
+  const wins = trades.filter((trade) => trade.returnPct > 0).length;
+  const totalReturn = ((finalEquity - initialEquity) / initialEquity) * 100;
+
+  return {
+    trades,
+    equityCurve,
+    totalReturn,
+    maxDrawdown: calculateMaxDrawdown(equityCurve),
+    winRate: trades.length > 0 ? (wins / trades.length) * 100 : 0,
+    sharpeRatio: calculateSharpeRatio(tradeReturns),
+  };
+}
+
+function runSignalsBacktest(candles: Candle[], signals: Signal[]): BacktestResult {
+  const initialEquity = 10000;
+  let equity = initialEquity;
+  let inPosition = false;
+  let buyPrice = 0;
+  let buyDate = "";
+
+  const trades: Trade[] = [];
+  const equityCurve: EquityPoint[] = [];
+
+  const signalsByDate = new Map<string, Signal["type"][]>();
+  for (const signal of signals) {
+    const current = signalsByDate.get(signal.date) ?? [];
+    current.push(signal.type);
+    signalsByDate.set(signal.date, current);
+  }
+
+  for (const candle of candles) {
+    const dailySignals = signalsByDate.get(candle.date) ?? [];
+
+    if (!inPosition && dailySignals.includes("BUY")) {
+      inPosition = true;
+      buyPrice = candle.close;
+      buyDate = candle.date;
+    } else if (inPosition && dailySignals.includes("SELL")) {
+      const tradeReturn = (candle.close - buyPrice) / buyPrice;
+      equity *= 1 + tradeReturn;
+      trades.push({
+        buyDate,
+        buyPrice,
+        sellDate: candle.date,
+        sellPrice: candle.close,
+        returnPct: tradeReturn * 100,
+      });
+      inPosition = false;
+      buyPrice = 0;
+      buyDate = "";
+    }
+
+    equityCurve.push({ date: candle.date, value: equity });
+  }
+
+  if (inPosition && candles.length > 0) {
+    const lastCandle = candles[candles.length - 1];
+    const tradeReturn = (lastCandle.close - buyPrice) / buyPrice;
+    equity *= 1 + tradeReturn;
+    trades.push({
+      buyDate,
+      buyPrice,
+      sellDate: lastCandle.date,
+      sellPrice: lastCandle.close,
+      returnPct: tradeReturn * 100,
+    });
+
+    const lastPoint = equityCurve[equityCurve.length - 1];
+    if (lastPoint && lastPoint.date === lastCandle.date) {
+      lastPoint.value = equity;
+    } else {
+      equityCurve.push({ date: lastCandle.date, value: equity });
+    }
+  }
+
+  return finalizeBacktest(trades, equityCurve, initialEquity, equity);
+}
+
+export function runBacktest(candles: Candle[], strategyOrSignals: Strategy | Signal[]): BacktestResult {
+  if (Array.isArray(strategyOrSignals)) {
+    return runSignalsBacktest(candles, strategyOrSignals);
+  }
+
+  const strategy = strategyOrSignals;
   const closes = candles.map((candle) => candle.close);
 
   const rsi14 = rsi(closes, 14);
@@ -167,7 +262,6 @@ export function runBacktest(candles: Candle[], strategy: Strategy): BacktestResu
   let buyPrice = 0;
   let buyDate = "";
 
-  const tradeReturns: number[] = [];
   const trades: Trade[] = [];
   const equityCurve: EquityPoint[] = [];
 
@@ -184,7 +278,6 @@ export function runBacktest(candles: Candle[], strategy: Strategy): BacktestResu
     } else if (allRulesPass(strategy.sellRules, i)) {
       const tradeReturn = (price - buyPrice) / buyPrice;
       equity *= 1 + tradeReturn;
-      tradeReturns.push(tradeReturn);
 
       trades.push({
         buyDate,
@@ -207,7 +300,6 @@ export function runBacktest(candles: Candle[], strategy: Strategy): BacktestResu
     const sellPrice = lastCandle.close;
     const tradeReturn = (sellPrice - buyPrice) / buyPrice;
     equity *= 1 + tradeReturn;
-    tradeReturns.push(tradeReturn);
 
     trades.push({
       buyDate,
@@ -225,15 +317,5 @@ export function runBacktest(candles: Candle[], strategy: Strategy): BacktestResu
     }
   }
 
-  const wins = trades.filter((trade) => trade.returnPct > 0).length;
-  const totalReturn = ((equity - initialEquity) / initialEquity) * 100;
-
-  return {
-    trades,
-    equityCurve,
-    totalReturn,
-    maxDrawdown: calculateMaxDrawdown(equityCurve),
-    winRate: trades.length > 0 ? (wins / trades.length) * 100 : 0,
-    sharpeRatio: calculateSharpeRatio(tradeReturns),
-  };
+  return finalizeBacktest(trades, equityCurve, initialEquity, equity);
 }

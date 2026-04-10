@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getLatestPrice, getTickerDetails, getTickerNews } from "@/lib/massive";
+import { getQuote } from "@/lib/finnhub";
+import { getTickerDetails, getTickerNews } from "@/lib/massive";
 
 export async function GET(request: NextRequest) {
   try {
@@ -9,11 +10,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "ticker required" }, { status: 400 });
     }
 
-    const [snapshot, news, details] = await Promise.all([
-      getLatestPrice(ticker),
+    const [quote, news, details] = await Promise.all([
+      getQuote(ticker),
       getTickerNews(ticker),
       getTickerDetails(ticker),
     ]);
+
+    const snapshot = {
+      open: quote.open,
+      high: quote.high,
+      low: quote.low,
+      close: quote.current,
+      change: quote.change,
+      changePct: quote.changePercent,
+      prevClose: quote.prevClose,
+      updatedAt: quote.updatedAt,
+    };
 
     return NextResponse.json({ snapshot, news, details });
   } catch {

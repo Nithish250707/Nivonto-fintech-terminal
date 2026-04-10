@@ -11,7 +11,7 @@ type PromptContext = {
   low: number | string;
   prevClose: number | string;
   change: number | string;
-  changePct: number | string;
+  changePercent: number | string;
   news: NewsItem[];
 };
 
@@ -46,7 +46,7 @@ export function buildSystemPrompt(context: PromptContext) {
 - Current price: ${context.price}
 - Today Open / High / Low: ${context.open} / ${context.high} / ${context.low}
 - Previous close: ${context.prevClose}
-- Change: ${withSign(context.change)} (${withSign(context.changePct)}%)
+- Change: ${withSign(context.change)} (${withSign(context.changePercent)}%)
 
 ## Latest News
 ${newsLines}
